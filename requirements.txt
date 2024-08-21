@@ -1,5 +1,3 @@
-Pillow
-pytesseract
 termux-api
 Pillow
 pytesseract
