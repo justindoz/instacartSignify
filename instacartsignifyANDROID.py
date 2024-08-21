@@ -1,6 +1,6 @@
 import threading
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageOps
 import subprocess
 import os
 import time
@@ -11,6 +11,7 @@ import ui
 class LiveOCRView(ui.View):
 
     def __init__(self):
+        super().__init__()
         self.bg_color = 'black'
         self.image_view = ui.ImageView(frame=self.bounds)
         self.image_view.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
@@ -22,36 +23,34 @@ class LiveOCRView(ui.View):
         self.text_view.background_color = 'black'
         self.add_subview(self.text_view)
 
-        self.update_interval = 1
+        self.update_interval = 1  # Interval between frames in seconds
         self.run_thread = True
 
-        # Start the thread
+        # Start the thread to capture images and process OCR
         self.thread = threading.Thread(target=self.update_image)
         self.thread.start()
 
     def capture_frame(self):
+        """Capture a frame using the device's camera."""
         photo_path = '/data/data/com.termux/files/home/captured_frame.jpg'
         try:
-            # Use Termux command to capture a photo
-            result = subprocess.run(['termux-camera-photo', '-c', '0', photo_path], check=True)
-            if result.returncode == 0:
-                return photo_path
-            else:
-                print(f"Error: Camera command failed with return code {result.returncode}")
-                return None
+            # Run Termux camera command
+            subprocess.run(['termux-camera-photo', '-c', '0', photo_path], check=True)
+            return photo_path
         except subprocess.CalledProcessError as e:
             print(f"Error capturing frame: {e}")
             return None
-        except FileNotFoundError as e:
-            print(f"Error: Termux camera utility not found: {e}")
+        except FileNotFoundError:
+            print("Error: Termux camera utility not found.")
             return None
 
     def get_photo_library(self):
+        """Retrieve a list of photo file paths from the photo library."""
         photo_dir = '/data/data/com.termux/files/home/photos'
         if not os.path.exists(photo_dir):
             print(f"Error: Photo directory '{photo_dir}' does not exist.")
             return []
-        
+
         try:
             photos = [os.path.join(photo_dir, f) for f in os.listdir(photo_dir) if os.path.isfile(os.path.join(photo_dir, f))]
             return photos
@@ -60,6 +59,7 @@ class LiveOCRView(ui.View):
             return []
 
     def check_for_match(self, ocr_text, photos):
+        """Check if the OCR text matches any text in the photos from the library."""
         matched_photos = []
         for photo in photos:
             try:
@@ -72,12 +72,14 @@ class LiveOCRView(ui.View):
         return matched_photos
 
     def update_image(self):
+        """Continuously capture frames and process them for OCR."""
         while self.run_thread:
             time.sleep(self.update_interval)
             frame_path = self.capture_frame()
             if frame_path and os.path.exists(frame_path):
                 try:
                     pil_image = Image.open(frame_path)
+                    pil_image = ImageOps.exif_transpose(pil_image)  # Correct orientation
                     ocr_text = pytesseract.image_to_string(pil_image)
                     
                     photos = self.get_photo_library()
@@ -86,9 +88,16 @@ class LiveOCRView(ui.View):
                     self.update_ui(pil_image, ocr_text, matches)
                 except Exception as e:
                     print(f"Error during OCR or UI update: {e}")
+                finally:
+                    # Cleanup: Delete the captured frame file
+                    try:
+                        os.remove(frame_path)
+                    except Exception as e:
+                        print(f"Error deleting frame file '{frame_path}': {e}")
 
+    @ui.in_background
     def update_ui(self, pil_image, ocr_text, matches):
-        print("Updating UI.")
+        """Update the UI with the latest image and OCR results."""
         try:
             with io.BytesIO() as output:
                 pil_image.save(output, format="PNG")
@@ -102,11 +111,12 @@ class LiveOCRView(ui.View):
             print(f"Error updating UI: {e}")
 
     def will_close(self):
+        """Stop the thread when the view is closing."""
         self.run_thread = False
+        self.thread.join()  # Ensure the thread terminates cleanly
         print("Session stopped.")
 
 
 if __name__ == '__main__':
     view = LiveOCRView()
     view.present('fullscreen', hide_title_bar=True)
-
