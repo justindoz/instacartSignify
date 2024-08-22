@@ -34,32 +34,43 @@ class LiveOCRView(ui.View):
         """Capture a frame using the device's camera."""
         photo_path = '/data/data/com.termux/files/home/captured_frame.jpg'
         try:
+            self.show_status("Capturing Image...")
             # Run Termux camera command
             subprocess.run(['termux-camera-photo', '-c', '0', photo_path], check=True)
+            self.show_status("Image Captured.")
             return photo_path
         except subprocess.CalledProcessError as e:
-            print(f"Error capturing frame: {e}")
+            error_msg = f"Error capturing frame: {e}"
+            print(error_msg)
+            self.show_status(error_msg)
             return None
         except FileNotFoundError:
-            print("Error: Termux camera utility not found.")
+            error_msg = "Error: Termux camera utility not found."
+            print(error_msg)
+            self.show_status(error_msg)
             return None
 
     def get_photo_library(self):
         """Retrieve a list of photo file paths from the photo library."""
         photo_dir = '/data/data/com.termux/files/home/photos'
         if not os.path.exists(photo_dir):
-            print(f"Error: Photo directory '{photo_dir}' does not exist.")
+            error_msg = f"Error: Photo directory '{photo_dir}' does not exist."
+            print(error_msg)
+            self.show_status(error_msg)
             return []
 
         try:
             photos = [os.path.join(photo_dir, f) for f in os.listdir(photo_dir) if os.path.isfile(os.path.join(photo_dir, f))]
             return photos
         except Exception as e:
-            print(f"Error accessing photo library: {e}")
+            error_msg = f"Error accessing photo library: {e}"
+            print(error_msg)
+            self.show_status(error_msg)
             return []
 
     def check_for_match(self, ocr_text, photos):
         """Check if the OCR text matches any text in the photos from the library."""
+        self.show_status("Checking for matches...")
         matched_photos = []
         for photo in photos:
             try:
@@ -68,7 +79,9 @@ class LiveOCRView(ui.View):
                     if ocr_text in text:
                         matched_photos.append(photo)
             except Exception as e:
-                print(f"Error processing photo '{photo}': {e}")
+                error_msg = f"Error processing photo '{photo}': {e}"
+                print(error_msg)
+                self.show_status(error_msg)
         return matched_photos
 
     def update_image(self):
@@ -78,6 +91,7 @@ class LiveOCRView(ui.View):
             frame_path = self.capture_frame()
             if frame_path and os.path.exists(frame_path):
                 try:
+                    self.show_status("Processing Image...")
                     pil_image = Image.open(frame_path)
                     pil_image = ImageOps.exif_transpose(pil_image)  # Correct orientation
                     ocr_text = pytesseract.image_to_string(pil_image)
@@ -87,13 +101,17 @@ class LiveOCRView(ui.View):
 
                     self.update_ui(pil_image, ocr_text, matches)
                 except Exception as e:
-                    print(f"Error during OCR or UI update: {e}")
+                    error_msg = f"Error during OCR or UI update: {e}"
+                    print(error_msg)
+                    self.show_status(error_msg)
                 finally:
                     # Cleanup: Delete the captured frame file
                     try:
                         os.remove(frame_path)
                     except Exception as e:
-                        print(f"Error deleting frame file '{frame_path}': {e}")
+                        error_msg = f"Error deleting frame file '{frame_path}': {e}"
+                        print(error_msg)
+                        self.show_status(error_msg)
 
     @ui.in_background
     def update_ui(self, pil_image, ocr_text, matches):
@@ -108,10 +126,17 @@ class LiveOCRView(ui.View):
             else:
                 self.text_view.text = "No match found"
         except Exception as e:
-            print(f"Error updating UI: {e}")
+            error_msg = f"Error updating UI: {e}"
+            print(error_msg)
+            self.show_status(error_msg)
+
+    def show_status(self, message):
+        """Display a status message in the text view."""
+        self.text_view.text = message
 
     def will_close(self):
         """Stop the thread when the view is closing."""
+        self.show_status("Stopping...")
         self.run_thread = False
         self.thread.join()  # Ensure the thread terminates cleanly
         print("Session stopped.")
