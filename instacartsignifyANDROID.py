@@ -1,85 +1,118 @@
-import time
-import os
 import threading
-from PIL import Image
 import pytesseract
-from termux_api import Termux
+from PIL import Image, ImageOps, ImageEnhance
+import subprocess
+import os
+import time
+import io
 
-# Initialize Termux API
-termux = Termux()
+class LiveOCRView:
 
-class LiveOCR:
     def __init__(self):
-        self.update_interval = 1
+        self.update_interval = 1  # Interval between frames in seconds
         self.run_thread = True
 
-        # Start the thread for continuous OCR and photo sync
-        self.thread = threading.Thread(target=self.process_images)
+        # Create necessary directories
+        self.photo_path = 'mkdir/photo.jpg'
+        self.photo_dir = 'mkdir/photo_dir'
+        os.makedirs(os.path.dirname(self.photo_path), exist_ok=True)
+        os.makedirs(self.photo_dir, exist_ok=True)
+
+        # Start the thread to capture images and process OCR
+        self.thread = threading.Thread(target=self.update_image)
         self.thread.start()
 
-    def capture_image(self):
-        # Capture an image using the Termux camera
-        termux.camera_photo(output_path='/tmp/capture.jpg', front=False)
-        return '/tmp/capture.jpg'
+    def capture_frame(self):
+        """Capture a frame using the device's camera."""
+        try:
+            print("Capturing Image...")
+            # Run Termux camera command
+            subprocess.run(['termux-camera-photo', '-c', '0', self.photo_path], check=True)
+            print("Image Captured.")
+            return self.photo_path
+        except subprocess.CalledProcessError as e:
+            print(f"Error capturing frame: {e}")
+            return None
+        except FileNotFoundError:
+            print("Error: Termux camera utility not found.")
+            return None
 
-    def get_photo_library_images(self):
-        # Fetch all images from the photo library
-        photo_dir = '/sdcard/DCIM/Camera'  # Typical path, might need adjustment
-        images = [os.path.join(photo_dir, img) for img in os.listdir(photo_dir) if img.endswith('.jpg')]
-        return images
+    def get_photo_library(self):
+        """Retrieve a list of photo file paths from the photo library."""
+        if not os.path.exists(self.photo_dir):
+            print(f"Error: Photo directory '{self.photo_dir}' does not exist.")
+            return []
 
-    def perform_ocr(self, image_path):
-        # Perform OCR on a given image
-        image = Image.open(image_path)
-        text = pytesseract.image_to_string(image)
-        return text
+        try:
+            photos = [os.path.join(self.photo_dir, f) for f in os.listdir(self.photo_dir) if os.path.isfile(os.path.join(self.photo_dir, f))]
+            return photos
+        except Exception as e:
+            print(f"Error accessing photo library: {e}")
+            return []
 
-    def compare_with_photo_library(self, ocr_text):
+    def check_for_match(self, ocr_text, photos):
+        """Check if the OCR text matches any text in the photos from the library."""
+        print("Checking for matches...")
         matched_photos = []
-        images = self.get_photo_library_images()
-        for img in images:
-            photo_ocr_text = self.perform_ocr(img)
-            if ocr_text in photo_ocr_text:
-                matched_photos.append(img)
+        for photo in photos:
+            try:
+                with Image.open(photo) as img:
+                    text = pytesseract.image_to_string(img)
+                    if ocr_text in text:
+                        matched_photos.append(photo)
+            except Exception as e:
+                print(f"Error processing photo '{photo}': {e}")
         return matched_photos
 
-    def delete_photo(self, photo_path):
-        # Delete the photo from the library
-        try:
-            os.remove(photo_path)
-            print(f"Deleted photo: {photo_path}")
-        except Exception as e:
-            print(f"Error deleting photo: {photo_path}, {str(e)}")
-
-    def process_images(self):
+    def update_image(self):
+        """Continuously capture frames and process them for OCR."""
         while self.run_thread:
-            # Capture and process an image from the camera
-            captured_image = self.capture_image()
-            ocr_text = self.perform_ocr(captured_image)
-
-            # Compare the OCR text with photos in the library
-            matched_photos = self.compare_with_photo_library(ocr_text)
-            if matched_photos:
-                self.indicate_and_delete_match(matched_photos)
-
-            # Wait before the next capture
             time.sleep(self.update_interval)
+            frame_path = self.capture_frame()
+            if frame_path and os.path.exists(frame_path):
+                try:
+                    print("Processing Image...")
+                    pil_image = Image.open(frame_path)
+                    pil_image = ImageOps.exif_transpose(pil_image)  # Correct orientation
+                    
+                    # Enhance the image before OCR
+                    enhancer = ImageEnhance.Contrast(pil_image)
+                    pil_image = enhancer.enhance(2)  # Increase contrast for better OCR
+                    
+                    ocr_text = pytesseract.image_to_string(pil_image)
+                    
+                    photos = self.get_photo_library()
+                    matches = self.check_for_match(ocr_text, photos)
 
-    def indicate_and_delete_match(self, matched_photos):
-        # Indicate that a match was found and delete the matched photos
-        print("Match found in the following photos:")
-        for photo in matched_photos:
-            print(photo)
-            self.delete_photo(photo)
+                    self.update_ui(ocr_text, matches)
+                except Exception as e:
+                    print(f"Error during OCR or UI update: {e}")
+                finally:
+                    # Cleanup: Delete the captured frame file
+                    try:
+                        os.remove(frame_path)
+                    except Exception as e:
+                        print(f"Error deleting frame file '{frame_path}': {e}")
+
+    def update_ui(self, ocr_text, matches):
+        """Log the OCR results and matched photos."""
+        print(f"OCR Text: {ocr_text}")
+        if matches:
+            print(f"Match Found: {', '.join(matches)}")
+        else:
+            print("No match found")
 
     def stop(self):
+        """Stop the thread when the view is closing."""
+        print("Stopping...")
         self.run_thread = False
+        self.thread.join()  # Ensure the thread terminates cleanly
+        print("Session stopped.")
 
 if __name__ == '__main__':
-    live_ocr = LiveOCR()
+    view = LiveOCRView()
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        live_ocr.stop()
-            
+        view.stop()
