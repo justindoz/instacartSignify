@@ -28,7 +28,7 @@ class LiveOCRView(ui.View):
 
         self.setup_video_capture()
 
-        # Start the thread after video capture is set up
+        # Start the thread for video capture and photo library sync
         self.thread = threading.Thread(target=self.update_image)
         self.thread.start()
 
@@ -60,7 +60,6 @@ class LiveOCRView(ui.View):
         self.preview_layer.setVideoGravity_(
             objc_util.ObjCInstance('AVLayerVideoGravityResizeAspectFill'))
 
-        # Correctly set frame using CGRect
         frame = objc_util.CGRectMake(0, 0, self.bounds.w, self.bounds.h)
         self.preview_layer.setFrame_(frame)
 
@@ -77,9 +76,11 @@ class LiveOCRView(ui.View):
     @objc_util.on_main_thread
     def captureOutput_didOutputSampleBuffer_fromConnection_(
         self, _cmd, _output, sample_buffer, _connection):
+        print("Captured frame.")
         buffer = objc_util.ObjCInstance(sample_buffer)
         image_buffer = buffer.imageBuffer()
-        ci_image = objc_util.ObjCClass('CIImage').imageWithCVImageBuffer_(image_buffer)
+        ci_image = objc_util.ObjCClass('CIImage').imageWithCVImageBuffer_(
+            image_buffer)
         context = objc_util.ObjCClass('CIContext').context()
         cg_image = context.createCGImage_fromRect_(ci_image, ci_image.extent())
 
@@ -92,10 +93,10 @@ class LiveOCRView(ui.View):
         # Update UI components on the main thread
         ui.in_background(self.update_ui)(ui_image, ocr_text)
 
-        # Compare OCR text against the photo library
-        matched_photos = self.compare_with_photo_library(ocr_text)
-        if matched_photos:
-            ui.in_background(self.indicate_match)(matched_photos)
+        # Compare with the photo library and delete matches
+        matched_assets = self.compare_with_photo_library(ocr_text)
+        if matched_assets:
+            self.delete_photos(matched_assets)
 
     def cgImage_to_ui_image(self, cg_image):
         data = objc_util.ObjCClass('UIImage').alloc().initWithCGImage_(
@@ -103,29 +104,25 @@ class LiveOCRView(ui.View):
         return ui.Image.from_data(data)
 
     def update_ui(self, ui_image, ocr_text):
+        print("Updating UI.")
         self.image_view.image = ui_image
         self.text_view.text = ocr_text
 
-    def get_photo_library_images(self):
-        assets = photos.get_assets()
-        images = []
-        for asset in assets:
-            with asset.get_image() as img:
-                images.append(img)
-        return images
-
     def compare_with_photo_library(self, ocr_text):
-        matched_photos = []
-        images = self.get_photo_library_images()
-        for img in images:
-            pil_image = Image.open(io.BytesIO(img.to_png()))
-            photo_ocr_text = pytesseract.image_to_string(pil_image)
-            if ocr_text in photo_ocr_text:
-                matched_photos.append(img)
-        return matched_photos
+        matched_assets = []
+        assets = photos.get_assets()
+        for asset in assets:
+            asset_image = asset.get_image()
+            asset_ocr_text = pytesseract.image_to_string(asset_image)
+            if ocr_text in asset_ocr_text:
+                matched_assets.append(asset)
+        return matched_assets
 
-    def indicate_match(self, matched_photos):
-        self.text_view.text += "\nMatch found in the photo library!"
+    def delete_photos(self, matched_assets):
+        # Delete the matched photos from the photo library
+        for asset in matched_assets:
+            photos.delete_assets([asset])
+            print(f"Deleted photo: {asset}")
 
     def will_close(self):
         self.run_thread = False
@@ -136,3 +133,4 @@ class LiveOCRView(ui.View):
 if __name__ == '__main__':
     view = LiveOCRView()
     view.present('fullscreen', hide_title_bar=True)
+            
