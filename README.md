@@ -6,3 +6,6 @@ Local photo library required to use, and proper imports on python on the above s
 Requirements.txt is there for Termux use, and StaSh. 
 
 Make sure to compile and change local photo library path before utilizing the script.
+
+
+This script may be altered for otnher uses... too many options to name over github. If you understand the logic, it may be easily altered within the script accordingly,
