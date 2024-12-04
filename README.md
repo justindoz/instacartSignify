@@ -3,7 +3,7 @@ Instacart script for image recognition of products to alert the shopper that ite
 
 Local photo library required to use, and proper imports on python on the above scripts are needed.
 
-Requirements.txt is there for Termux use, and StaSh. 
+Requirements.txt is there for Termux (Android) use, and StaSh/xTerminal/Pythonista usage (iOS). 
 
 Make sure to compile and change local photo library path before utilizing the script.
 
